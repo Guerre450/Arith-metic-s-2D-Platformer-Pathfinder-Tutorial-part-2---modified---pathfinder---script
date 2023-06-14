@@ -1,0 +1,268 @@
+extends Node2D
+
+# placing the graphs tutorial = https://youtu.be/OBBLgrhvaIo
+# This script was made in godot 3.5
+# someone gave changes to do for the script to work in godot 4 in the comments section of the video(may be inacurate)
+
+var tileMap
+var graph
+
+const FACE = preload("res://face.tscn")
+
+var jumpHeight = 2
+var jumpDistance = 2
+
+
+var cell_size = 16
+
+
+func _ready():
+	
+	graph = AStar2D.new()
+	tileMap = find_parent("Master").find_node("TileMap")
+	createMap()
+	connectPoints()
+	#_draw()
+	
+func connectPoints():
+#func _draw():
+	var points = graph.get_points()
+	for point in points:
+		var closeRight = -1
+		var closeLeftDrop = -1
+		var closeRightDrop = -1
+		#this takes a point id, and passes the point id's position
+		var pos = graph.get_point_position(point)
+		#determine the type of cell: blocked, upper right free or/and upper left free, + extra options in bool
+		var type = cellType(pos, true, true)
+		
+		var pointsToJoin = []
+		var nonBiJoin = []
+		
+		for newPoint in points:
+			#gets the position of the new point
+			var newPos = graph.get_point_position(newPoint)
+			# check if the right is a connection to another tile on the right and
+			# verify if that position's height, is the same as the old one,
+			if (type["right"] == null and newPos.y == pos.y and newPos.x > pos.x):
+				#check if closeRight hasn't been set yet or new position is more to the left than closeRight
+				if closeRight < 0 or newPos.x < graph.get_point_position(closeRight).x:
+					closeRight = newPoint
+			#verify if the left side is a drop
+			if (type["left"] == "free"):
+				#if one cell to the left and lower
+				if (newPos.x == pos.x - cell_size and newPos.y > pos.y):
+				#verify if closeLeftDrop hasn't been set or is new position higher than closeLeftDrop
+					if closeLeftDrop < 0 or newPos.y < graph.get_point_position(closeLeftDrop).y:
+						closeLeftDrop = newPoint
+						#check all conditions
+				var condition1 = check_if_new_position_is_lower_or_equal_than_position_adding_jumpheight(newPos, pos)
+				var condition2 = check_if_new_position_is_higher_or_equal_to_position(newPos, pos)
+				#left only
+				var condition3 = check_if_left_has_appropriate_jump_distance(newPos, pos)
+				var condition4 = check_if_new_position_is_to_the_left(newPos, pos)
+				var condition5 = check_if_the_right_of_the_new_position_is_free(newPos, pos)
+				
+				#print(" 1: " + str(condition1) + " 2: " + str(condition2) + " 3: " + str(condition3) + " 4: " + str(condition4) + " 5: " + str(condition5))
+				
+				if condition1 and condition2 and condition3 and condition4 and condition5:
+					pointsToJoin.append(newPoint)
+			#verify is the right side is a drop
+			if (type["right"] == "free"):
+				#if one cell to the right and lower
+					if (newPos.x == pos.x + cell_size and newPos.y > pos.y):
+				#verify if closeRightDrop hasn't been set or is new position higher than closeRightDrop
+						if closeRightDrop < 0 or newPos.y < graph.get_point_position(closeRightDrop).y:
+							closeRightDrop = newPoint
+						#check all conditions
+					var condition1 = check_if_new_position_is_lower_or_equal_than_position_adding_jumpheight(newPos, pos)
+					var condition2 = check_if_new_position_is_higher_or_equal_to_position(newPos, pos)
+					#right only
+					var condition3 = check_if_right_has_appropriate_jump_distance(newPos, pos)
+					var condition4 = check_if_new_position_is_to_the_right(newPos, pos)
+					var condition5 = check_if_the_left_of_the_new_position_is_free(newPos, pos)
+					#print(" 1: " + str(condition1) + " 2: " + str(condition2) + " 3: " + str(condition3) + " 4: " + str(condition4) + " 5: " + str(condition5))
+
+					if condition1 and condition2 and condition3 and condition4 and condition5:
+						pointsToJoin.append(newPoint)
+		if closeRight >= 0:
+			pointsToJoin.append(closeRight)
+		if closeLeftDrop >= 0:
+			if (graph.get_point_position(closeLeftDrop)[1] <= pos[1] + cell_size * jumpHeight):
+				pointsToJoin.append(closeLeftDrop)
+			else:
+				nonBiJoin.append(closeLeftDrop)
+		if closeRightDrop >= 0:
+			if (graph.get_point_position(closeRightDrop)[1] <= pos[1] + cell_size * jumpHeight):
+				
+				pointsToJoin.append(closeRightDrop)
+			else:
+				
+				nonBiJoin.append(closeRightDrop)
+			
+			
+		for join in pointsToJoin:
+			graph.connect_points(point, join)
+			#draw_line(pos, graph.get_point_position(join), Color(255, 0, 0), 1)
+
+		for join in nonBiJoin:
+			#If bidirectional is false, only movement from id to to_id is allowed, not the reverse direction.
+			graph.connect_points(point, join, false)
+			#draw_line(pos, graph.get_point_position(join), Color(0, 255, 0), 1)
+
+			
+			
+			
+func createMap():
+	#initialize a space state, to allow to cast
+	var space_state = get_world_2d().direct_space_state
+	#gets all the titlemap cells in the world
+	var cells = tileMap.get_used_cells()
+	#iterates throught every cell, 
+	for cell in cells:
+		#determine the type of cell: blocked, upper right free or/and upper left free
+		var type = cellType(cell)
+		# check if the kind of cell is not false and null, a.k.a isn't blocked by a cell over it and it's opened
+		# on atleast one side
+		if (type and (type["left"] != null or type["right"] != null) ):
+			createPoint(cell)
+			
+		#initiate a drop point
+			#if celltype has the following characteristics: no walls upper left , no walls neutral left
+			if type["left"] == "free":
+				#get left cell
+				var pos = tileMap.map_to_world(Vector2(cell.x - 1, cell.y))
+				#this will cast an array downwards the current pos(position)
+				var posTo = Vector2(pos.x, pos.y + 1000 )
+				#will cast ray from pos to posTo, and the result will be what it hits
+				var result = space_state.intersect_ray(pos, posTo)
+				#if it hits anything within a 1000, create a point
+				if (result):
+					#pass in the cell that we found, world_to_map has different type of cordinates than global_position
+					createPoint(tileMap.world_to_map(result.position))
+		#if celltype has the following characteristics: no walls upper right , no walls neutral right
+			if type["right"] == "free":
+				#get right cell
+				var pos = tileMap.map_to_world(Vector2(cell.x + 1, cell.y))
+				#this will cast an array downwards the current pos(position)
+				var posTo = Vector2(pos.x, pos.y + 1000 )
+				#will cast ray from pos to posTo, and the result will be what it hits
+				var result = space_state.intersect_ray(pos, posTo)
+				#if it hits anything within a 1000, create a point
+				if (result):
+					#pass in the cell that we found, world_to_map has different type of cordinates than global_position
+					createPoint(tileMap.world_to_map(result.position))
+	#print(graph.get_points().size())
+
+func cellType(pos, global = false, isAbove = false):
+	#if the position is a global position, 
+	if (global):
+		pos = tileMap.world_to_map(pos)
+	#if the position is above the current tile
+	if isAbove:
+		pos = Vector2(pos.x, pos.y + 1)
+		
+	var cells = tileMap.get_used_cells()
+	#checks if there's a cell above the current cell and
+	#pass null since we dont need it if it is the case
+	if (Vector2(pos.x, pos.y - 1) in cells):
+		return null
+		
+	#In Vector2 : the left string is the left status, the right string is the right status
+	#if one of the answer is null, it means that there is a cell attached 
+	#to the current cell in that direction at the same height
+	var results = {"left": null, "right" : null }
+	
+	#   (--- left side
+	#check if there is a wall, in the upper left location
+	if Vector2(pos.x - 1, pos.y - 1) in cells:
+		# 1 if wall
+		results["left"] = "wall"
+	#check if there is no wall --) at the current cell's neighbouring left location
+	elif not (Vector2(pos.x - 1, pos.y) in cells):
+		# -1 if it's free
+		results["left"] = "free"
+
+	#  ---) right side
+	#check if there is a wall, in the upper right location
+	if Vector2(pos.x + 1, pos.y - 1) in cells:
+		# 1 if wall
+		results["right"] = "wall"
+	#check if there is no wall --) at the current cell's neighbouring right location
+	elif not (Vector2(pos.x + 1, pos.y) in cells):
+		# -1 if it's nothing
+		results["right"] = "free"
+	
+	return results
+
+func createPoint(cell):
+	#gets the above cell
+	var above = Vector2(cell.x, (cell.y - 1))
+	#initialise the points, gets middle points
+	var pos = tileMap.map_to_world(above) + Vector2(cell_size/2, cell_size/2)
+	#if true there's already a point there, 
+	if graph.get_points() and graph.get_point_position(graph.get_closest_point(pos)) == pos:
+		return
+
+#	var face = FACE.instance()
+#	face.position = pos
+#	add_child(face)
+#	call_deferred("add_child", face)
+	
+	graph.add_point(graph.get_available_point_id(), pos)
+	
+	
+#all conditions
+#conditions which both side utilizes
+func check_if_new_position_is_lower_or_equal_than_position_adding_jumpheight(newPos, pos):
+	var jump_int = cell_size * jumpHeight
+	if newPos.y >= pos.y - jump_int:
+		return true
+	else:
+		return false
+func check_if_new_position_is_higher_or_equal_to_position(newPos, pos):
+	if newPos.y <= pos.y:
+		return true
+	else:
+		return false
+	
+
+#left specific
+func check_if_left_has_appropriate_jump_distance(newPos, pos):
+	var including_starting_and_last_blocks_jump_distance = jumpDistance + 2
+	var jump_int_distance = cell_size * including_starting_and_last_blocks_jump_distance
+	if newPos.x > pos.x - jump_int_distance:
+		return true
+	else:
+		return false
+func check_if_new_position_is_to_the_left(newPos, pos):
+	if newPos.x < pos.x:
+		return true
+	else:
+		return false
+func check_if_the_right_of_the_new_position_is_free(newPos, _pos):
+	if cellType(newPos, true, true)["right"] == "free":
+		return true
+	else:
+		return false
+
+
+#right specific
+func check_if_right_has_appropriate_jump_distance(newPos, pos):
+	var including_starting_and_last_blocks_jump_distance = jumpDistance + 2
+	var jump_int_distance = cell_size * including_starting_and_last_blocks_jump_distance
+	if newPos.x < pos.x + jump_int_distance:
+		return true
+	else:
+		return false
+func check_if_new_position_is_to_the_right(newPos, pos):
+	if newPos.x > pos.x:
+		return true
+	else:
+		return false
+		
+func check_if_the_left_of_the_new_position_is_free(newPos, _pos):
+	if cellType(newPos, true, true)["left"] == "free":
+		return true
+	else:
+		return false
